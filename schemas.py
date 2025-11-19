@@ -27,6 +27,11 @@ class Model(BaseModel):
     last_trained_at: Optional[datetime] = Field(None, description="Last training timestamp")
     accuracy: Optional[float] = Field(None, ge=0, le=1, description="Validation accuracy (0-1)")
     owner: Optional[str] = Field(None, description="Owner or team")
+    # Artifact metadata for uploaded model files
+    artifact_filename: Optional[str] = Field(None, description="Stored filename of the model artifact")
+    artifact_path: Optional[str] = Field(None, description="Server-side path to the stored artifact")
+    artifact_size: Optional[int] = Field(None, description="Size in bytes of the uploaded artifact")
+    artifact_content_type: Optional[str] = Field(None, description="MIME type of the uploaded artifact")
 
 class Workflow(BaseModel):
     name: str

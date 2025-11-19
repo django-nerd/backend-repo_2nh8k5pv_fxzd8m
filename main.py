@@ -2,8 +2,9 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from database import db, create_document, get_documents
@@ -23,6 +24,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Storage configuration
+MODELS_DIR = os.getenv("MODELS_DIR", "uploads")
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 
 # Helpers
@@ -142,6 +148,97 @@ def mark_needs_training(model_id: str):
         if res.matched_count == 0:
             raise HTTPException(status_code=404, detail="Model not found")
         return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Upload PPO model artifact
+@app.post("/api/models/{model_id}/artifact")
+def upload_model_artifact(model_id: str, file: UploadFile = File(...), version: Optional[str] = Form(None)):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        from bson import ObjectId
+        m = db["model"].find_one({"_id": ObjectId(model_id)})
+        if not m:
+            raise HTTPException(status_code=404, detail="Model not found")
+
+        # Directory for this model
+        model_dir = os.path.join(MODELS_DIR, model_id)
+        os.makedirs(model_dir, exist_ok=True)
+
+        # Preserve original filename; avoid path traversal
+        original_name = os.path.basename(file.filename or "artifact.bin")
+        stored_path = os.path.join(model_dir, original_name)
+
+        # Save file to disk
+        with open(stored_path, "wb") as out:
+            while True:
+                chunk = file.file.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+
+        size = os.path.getsize(stored_path)
+        content_type = file.content_type or "application/octet-stream"
+
+        update_doc = {
+            "artifact_filename": original_name,
+            "artifact_path": stored_path,
+            "artifact_size": size,
+            "artifact_content_type": content_type,
+            "updated_at": datetime.now(timezone.utc),
+        }
+        if version:
+            update_doc["version"] = version
+
+        db["model"].update_one({"_id": ObjectId(model_id)}, {"$set": update_doc})
+        return {"ok": True, "filename": original_name, "size": size}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/models/{model_id}/artifact")
+def get_model_artifact_info(model_id: str):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        from bson import ObjectId
+        m = db["model"].find_one({"_id": ObjectId(model_id)})
+        if not m:
+            raise HTTPException(status_code=404, detail="Model not found")
+        info = {k: m.get(k) for k in [
+            "artifact_filename",
+            "artifact_path",
+            "artifact_size",
+            "artifact_content_type",
+            "version",
+        ]}
+        return serialize_doc(info)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/models/{model_id}/artifact/download")
+def download_model_artifact(model_id: str):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        from bson import ObjectId
+        m = db["model"].find_one({"_id": ObjectId(model_id)})
+        if not m:
+            raise HTTPException(status_code=404, detail="Model not found")
+        path = m.get("artifact_path")
+        filename = m.get("artifact_filename") or "artifact.bin"
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        return FileResponse(path, media_type=m.get("artifact_content_type") or "application/octet-stream", filename=filename)
     except HTTPException:
         raise
     except Exception as e:

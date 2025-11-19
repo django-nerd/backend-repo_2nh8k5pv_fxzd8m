@@ -1,6 +1,8 @@
 import os
+import hashlib
+import zipfile
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +15,7 @@ from schemas import (
     TrainingRun as TrainingRunSchema,
     SimulationRun as SimulationRunSchema,
     Workflow as WorkflowSchema,
+    Artifact as ArtifactSchema,
 )
 
 app = FastAPI(title="AI Ops Dashboard API")
@@ -49,6 +52,27 @@ def serialize_doc(doc: dict) -> dict:
 def list_collection(name: str, limit: Optional[int] = None, filter_dict: Optional[dict] = None):
     docs = get_documents(name, filter_dict or {}, limit)
     return [serialize_doc(x) for x in docs]
+
+
+def sha256_file(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def is_probably_sb3_zip(path: str) -> bool:
+    if not path.lower().endswith('.zip'):
+        return False
+    try:
+        with zipfile.ZipFile(path, 'r') as z:
+            names = {n.lower() for n in z.namelist()}
+            # Common SB3 contents
+            expected = {"policy.pth", "policy.pkl", "data.pkl", "parameters.pkl", "params.json"}
+            return any(e in names or any(n.endswith(e) for n in names) for e in expected)
+    except Exception:
+        return False
 
 
 # Root and health
@@ -115,6 +139,10 @@ class CreateSimulationRequest(BaseModel):
     scenario: str = "default"
 
 
+class PromoteArtifactRequest(BaseModel):
+    artifact_id: str
+
+
 # Models endpoints
 @app.get("/api/models")
 def get_models():
@@ -130,6 +158,7 @@ def create_model(body: CreateModel):
         owner=body.owner,
         status="ready",
         last_trained_at=None,
+        artifact_count=0,
     )
     new_id = create_document("model", data)
     return {"id": new_id}
@@ -154,9 +183,14 @@ def mark_needs_training(model_id: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-# Upload PPO model artifact
+# Upload artifact (versioned), with optional promotion to active
 @app.post("/api/models/{model_id}/artifact")
-def upload_model_artifact(model_id: str, file: UploadFile = File(...), version: Optional[str] = Form(None)):
+def upload_model_artifact(
+    model_id: str,
+    file: UploadFile = File(...),
+    version: Optional[str] = Form(None),
+    promote: Optional[bool] = Form(False),
+):
     if db is None:
         raise HTTPException(status_code=500, detail="Database not available")
     try:
@@ -171,7 +205,9 @@ def upload_model_artifact(model_id: str, file: UploadFile = File(...), version: 
 
         # Preserve original filename; avoid path traversal
         original_name = os.path.basename(file.filename or "artifact.bin")
-        stored_path = os.path.join(model_dir, original_name)
+        # If version provided, prefix to avoid collisions
+        stored_name = f"{version}_{original_name}" if version else original_name
+        stored_path = os.path.join(model_dir, stored_name)
 
         # Save file to disk
         with open(stored_path, "wb") as out:
@@ -183,25 +219,140 @@ def upload_model_artifact(model_id: str, file: UploadFile = File(...), version: 
 
         size = os.path.getsize(stored_path)
         content_type = file.content_type or "application/octet-stream"
+        checksum = sha256_file(stored_path)
+        sb3_valid = is_probably_sb3_zip(stored_path)
 
-        update_doc = {
-            "artifact_filename": original_name,
-            "artifact_path": stored_path,
-            "artifact_size": size,
-            "artifact_content_type": content_type,
-            "updated_at": datetime.now(timezone.utc),
-        }
-        if version:
-            update_doc["version"] = version
+        art = ArtifactSchema(
+            model_id=model_id,
+            version=version or datetime.now(timezone.utc).strftime("v%Y%m%d-%H%M%S"),
+            filename=stored_name,
+            path=stored_path,
+            size=size,
+            content_type=content_type,
+            checksum_sha256=checksum,
+            sb3_valid=sb3_valid,
+        )
+        artifact_id = create_document("artifact", art)
 
-        db["model"].update_one({"_id": ObjectId(model_id)}, {"$set": update_doc})
-        return {"ok": True, "filename": original_name, "size": size}
+        # bump artifact_count
+        db["model"].update_one({"_id": ObjectId(model_id)}, {"$inc": {"artifact_count": 1}})
+
+        # Optionally promote to active
+        if promote or not m.get("artifact_filename"):
+            db["model"].update_one(
+                {"_id": ObjectId(model_id)},
+                {"$set": {
+                    "artifact_filename": stored_name,
+                    "artifact_path": stored_path,
+                    "artifact_size": size,
+                    "artifact_content_type": content_type,
+                    "active_version": art.version,
+                    "updated_at": datetime.now(timezone.utc),
+                }}
+            )
+
+        return {"ok": True, "artifact_id": artifact_id, "filename": stored_name, "size": size, "sb3_valid": sb3_valid}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# List artifacts for a model
+@app.get("/api/models/{model_id}/artifacts")
+def list_model_artifacts(model_id: str) -> List[dict]:
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        from bson import ObjectId
+        # verify model exists
+        m = db["model"].find_one({"_id": ObjectId(model_id)})
+        if not m:
+            raise HTTPException(status_code=404, detail="Model not found")
+        docs = get_documents("artifact", {"model_id": model_id}, limit=200)
+        return [serialize_doc(d) for d in docs]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Promote an artifact to be active for the model
+@app.post("/api/models/{model_id}/artifacts/{artifact_id}/promote")
+def promote_artifact(model_id: str, artifact_id: str):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        from bson import ObjectId
+        art = db["artifact"].find_one({"_id": ObjectId(artifact_id), "model_id": model_id})
+        if not art:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        db["model"].update_one(
+            {"_id": ObjectId(model_id)},
+            {"$set": {
+                "artifact_filename": art.get("filename"),
+                "artifact_path": art.get("path"),
+                "artifact_size": art.get("size"),
+                "artifact_content_type": art.get("content_type"),
+                "active_version": art.get("version"),
+                "updated_at": datetime.now(timezone.utc)
+            }}
+        )
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Delete an artifact
+@app.delete("/api/models/{model_id}/artifacts/{artifact_id}")
+def delete_artifact(model_id: str, artifact_id: str):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        from bson import ObjectId
+        art = db["artifact"].find_one({"_id": ObjectId(artifact_id), "model_id": model_id})
+        if not art:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        # remove file on disk (best-effort)
+        try:
+            if art.get("path") and os.path.exists(art["path"]):
+                os.remove(art["path"])
+        except Exception:
+            pass
+        db["artifact"].delete_one({"_id": ObjectId(artifact_id)})
+        # decrement artifact_count
+        db["model"].update_one({"_id": ObjectId(model_id)}, {"$inc": {"artifact_count": -1}})
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Download a specific artifact by id
+@app.get("/api/artifacts/{artifact_id}/download")
+def download_artifact(artifact_id: str):
+    if db is None:
+        raise HTTPException(status_code=500, detail="Database not available")
+    try:
+        from bson import ObjectId
+        art = db["artifact"].find_one({"_id": ObjectId(artifact_id)})
+        if not art:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        path = art.get("path")
+        filename = art.get("filename") or "artifact.bin"
+        if not path or not os.path.exists(path):
+            raise HTTPException(status_code=404, detail="Artifact file missing from disk")
+        return FileResponse(path, media_type=art.get("content_type") or "application/octet-stream", filename=filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# Existing active-artifact info route (kept for convenience)
 @app.get("/api/models/{model_id}/artifact")
 def get_model_artifact_info(model_id: str):
     if db is None:
@@ -216,7 +367,8 @@ def get_model_artifact_info(model_id: str):
             "artifact_path",
             "artifact_size",
             "artifact_content_type",
-            "version",
+            "active_version",
+            "artifact_count",
         ]}
         return serialize_doc(info)
     except HTTPException:

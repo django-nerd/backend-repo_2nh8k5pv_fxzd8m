@@ -1,17 +1,29 @@
 INFO:     Will watch for changes in these directories: ['/home/workspace']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     Started reloader process [245] using StatReload
-INFO:     Started server process [247]
+INFO:     Started reloader process [338] using StatReload
+INFO:     Started server process [340]
 INFO:     Waiting for application startup.
 INFO:     Application startup complete.
-INFO:     172.20.0.1:47564 - "HEAD / HTTP/1.1" 405 Method Not Allowed
-INFO:     172.20.0.1:47554 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:47562 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:47554 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:47562 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45554 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45554 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45568 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:45568 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:43124 - "GET /api/models HTTP/1.1" 200 OK
-INFO:     172.20.0.1:43124 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33828 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+INFO:     172.20.0.1:33842 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33856 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33842 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33856 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33874 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33856 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33842 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33856 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33898 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33856 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33898 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38780 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38780 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38790 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38780 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33870 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33870 - "GET /api/models HTTP/1.1" 200 OK
+INFO:     172.20.0.1:33870 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38822 - "GET /api/models/691ded90e9a87a364747c500/artifacts HTTP/1.1" 200 OK
+INFO:     172.20.0.1:34830 - "GET /api/models/691ded90e9a87a364747c500/artifact/download HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38806 - "OPTIONS /api/models/691ded90e9a87a364747c500/simulate HTTP/1.1" 200 OK
+INFO:     172.20.0.1:38806 - "POST /api/models/691ded90e9a87a364747c500/simulate HTTP/1.1" 200 OK
